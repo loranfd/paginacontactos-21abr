@@ -218,10 +218,6 @@
   function buildTipoViviendaLabel(config, contacto) {
     const categoria = resolveCategoria(config, contacto);
     if (!categoria) return 'Vivienda Normal';
-    if (isVillasCategory(categoria)) {
-      const viviendaInteresada = String(contacto?.['vivienda-interesada'] || '').trim();
-      return viviendaInteresada ? `${categoria.nombre} (${viviendaInteresada})` : categoria.nombre;
-    }
     return categoria.nombre || 'Vivienda Normal';
   }
 
