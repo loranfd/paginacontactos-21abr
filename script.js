@@ -2909,6 +2909,18 @@ function resolveCategoriaContacto(contacto) {
   return getContactoCategoriaId(contacto);
 }
 
+function isCategoriaActiva(categoria) {
+  if (!categoria) return true;
+  if (typeof categoria.activa === 'boolean') return categoria.activa;
+  const normalized = normalizeString(categoria.activa);
+  return !['false', '0', 'no', 'oculta', 'inactiva', 'off'].includes(normalized);
+}
+
+function isContactoDeCategoriaActiva(contacto) {
+  const categoria = CategoriaSystem.resolveCategoria(appConfig || getDefaultAppConfig(), contacto);
+  return isCategoriaActiva(categoria);
+}
+
 function buildTipoViviendaLabel(contacto) {
   return CategoriaSystem.buildTipoViviendaLabel(appConfig || getDefaultAppConfig(), contacto);
 }
@@ -3333,6 +3345,9 @@ function aplicarFiltro({ resetPage = true } = {}) {
   
   // Usar originalContactosData que contiene TODOS los contactos
   let datosBase = incluirEliminados ? originalContactosData : originalContactosData.filter(c => !isEliminado(c));
+
+  // Ocultar contactos de promociones ocultas en ajustes
+  datosBase = datosBase.filter(isContactoDeCategoriaActiva);
   
   let contactosFiltrados;
   
