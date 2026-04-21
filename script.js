@@ -5,6 +5,26 @@ Prohibida la copia o distribución de este código sin autorización.
 */
 
 const urlApi = 'https://script.google.com/macros/s/AKfycbzhw3QMxMyVBuSzbabj8wPc5hm5X75AODXqz7Kn737rn46G670fl844EWLhy0G13bc/exec';
+
+function getApiKey() {
+  try {
+    return String(localStorage.getItem('app_api_key') || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function withApiKey(payload = {}) {
+  const key = getApiKey();
+  return key ? { ...payload, apiKey: key } : payload;
+}
+
+function appendApiKeyToUrl(url) {
+  const key = getApiKey();
+  if (!key) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}apiKey=${encodeURIComponent(key)}`;
+}
 const offsetFilas = 1;
 
 // Variables para ordenación cíclica
@@ -511,7 +531,7 @@ async function actualizarFila(id, datos) {
 }
 async function obtenerFilaPorId(id) {
   try {
-    const response = await fetch(`${urlApi}?id=${encodeURIComponent(id)}`);
+    const response = await fetch(appendApiKeyToUrl(`${urlApi}?id=${encodeURIComponent(id)}`));
     const result = await response.json();
     if (result.status !== 'success') throw new Error(result.message || 'Error al obtener fila');
     return result.data;
@@ -554,16 +574,17 @@ function esErrorAccionNoSoportada_(message) {
   return normalizeString(String(message || '')).includes('accion no soportada');
 }
 async function enviarSaveFormDataConCompatibilidad_(payloadConAction) {
-  const payloadSinAction = { ...payloadConAction };
+  const payloadConAuth = withApiKey(payloadConAction);
+  const payloadSinAction = { ...payloadConAuth };
   delete payloadSinAction.action;
 
   const intentos = [
     {
-      body: new URLSearchParams(payloadConAction),
+      body: new URLSearchParams(payloadConAuth),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     },
     {
-      body: JSON.stringify(payloadConAction),
+      body: JSON.stringify(payloadConAuth),
       headers: { 'Content-Type': 'application/json' }
     },
     {
@@ -599,7 +620,7 @@ async function enviarSaveFormDataConCompatibilidad_(payloadConAction) {
 }
 async function marcarCampoLegacyPorGet_(campo, id, valor) {
   const marcador = `${campo}:${id}:${valor ?? ''}`;
-  const response = await fetch(`${urlApi}?marcar=${encodeURIComponent(marcador)}`, { method: 'GET' });
+  const response = await fetch(appendApiKeyToUrl(`${urlApi}?marcar=${encodeURIComponent(marcador)}`), { method: 'GET' });
   if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
   return response.json();
 }
@@ -626,7 +647,7 @@ async function enviarRecordatorioEmail(id, when) {
     }
 
     const query = `sendReminder=${encodeURIComponent(id)}&when=${encodeURIComponent(whenValue)}`;
-    return await safeFetch(`${urlApi}?${query}`);
+    return await safeFetch(appendApiKeyToUrl(`${urlApi}?${query}`));
   } catch (e) {
     handleError('Error al enviar/programar email recordatorio', e);
     throw e;
@@ -635,7 +656,7 @@ async function enviarRecordatorioEmail(id, when) {
 // Función para ocultar fila (soft delete)
 async function ocultarFila(id) {
   try {
-    const response = await fetch(`${urlApi}?marcar=${encodeURIComponent(`eliminado:${id}:si`)}`, {
+    const response = await fetch(appendApiKeyToUrl(`${urlApi}?marcar=${encodeURIComponent(`eliminado:${id}:si`)}`), {
       method: 'GET', // Cambiar a GET para consistencia con otros endpoints
     });
     const result = await response.json();
@@ -660,7 +681,7 @@ async function ocultarFila(id) {
 // Función para restaurar fila
 async function restaurarFila(id) {
   try {
-    const response = await fetch(`${urlApi}?marcar=${encodeURIComponent(`eliminado:${id}:no`)}`, {
+    const response = await fetch(appendApiKeyToUrl(`${urlApi}?marcar=${encodeURIComponent(`eliminado:${id}:no`)}`), {
       method: 'GET',
     });
     const result = await response.json();
@@ -686,7 +707,7 @@ async function restaurarFila(id) {
 }
 async function eliminarDefinitivo(id) {
   try {
-    const response = await fetch(`${urlApi}?deleteRow=${encodeURIComponent(id)}`);
+    const response = await fetch(appendApiKeyToUrl(`${urlApi}?deleteRow=${encodeURIComponent(id)}`));
     const result = await response.json();
     if (result.status !== 'success') {
       throw new Error(result.message || 'Error al eliminar fila definitivamente');
@@ -2871,12 +2892,12 @@ function normalizeConfig(config) {
 
 async function apiConfigRequest(action, payload = {}, method = 'POST') {
   if (method === 'GET') {
-    return safeFetch(`${urlApi}?action=${encodeURIComponent(action)}`);
+    return safeFetch(appendApiKeyToUrl(`${urlApi}?action=${encodeURIComponent(action)}`));
   }
   return safeFetch(urlApi, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ action, ...payload })
+    body: new URLSearchParams(withApiKey({ action, ...payload }))
   });
 }
 
@@ -3302,7 +3323,7 @@ function getEmailTemplateByCategoria(categoriaId, payload = {}) {
 // ====================== CARGA DE CONTACTOS ======================
 async function cargarContactos(incluirEliminados = false) {
   try {
-    const response = await fetch(urlApi);
+    const response = await fetch(appendApiKeyToUrl(urlApi));
     
     // Verificar respuesta HTTP antes de parsear JSON
     if (!response.ok) {

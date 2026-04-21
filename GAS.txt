@@ -1,4 +1,18 @@
+function getConfiguredApiKey_() {
+  return String(PropertiesService.getScriptProperties().getProperty('API_KEY') || '').trim();
+}
+
+function assertApiKeyIfConfigured_(payload) {
+  const required = getConfiguredApiKey_();
+  if (!required) return;
+  const provided = String((payload && (payload.apiKey || payload.api_key)) || '').trim();
+  if (!provided || provided !== required) {
+    throw new Error('No autorizado');
+  }
+}
+
 function doGet(e) {
+
   try {
     e = e || { parameter: {} };
     const params = e.parameter || {};
@@ -16,9 +30,11 @@ function doGet(e) {
     if (idIndex === -1) throw new Error('Columna ID no encontrada');
 
     let response;
+    const categoriasConfig = getCategoriasConfig_();
 
     // --- Manejar parámetro marcar (OPTIMIZADO) ---
     if (params.marcar) {
+      assertApiKeyIfConfigured_(params);
       const marcarData = params.marcar.split(':');
       if (marcarData.length < 3) {
          return createResponse({ status: 'error', message: 'Formato de marcar inválido' });
@@ -107,6 +123,7 @@ function doGet(e) {
     
     // --- Manejar eliminación de fila (OPTIMIZADO) ---
     else if (params.deleteRow) {
+      assertApiKeyIfConfigured_(params);
       const id = params.deleteRow;
       const rowNum = findRowById_(sheet, id, headers);
       
@@ -125,7 +142,7 @@ function doGet(e) {
 
       if (rowNum !== -1) {
         const rowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
-        const dataObj = enrichContactoConCategoria_(convertRowToObject_(headers, rowData));
+        const dataObj = enrichContactoConCategoria_(convertRowToObject_(headers, rowData), categoriasConfig);
         dataObj["fila"] = rowNum;
         response = { status: 'success', data: dataObj };
       } else {
@@ -135,6 +152,7 @@ function doGet(e) {
 
     // --- Enviar email recordatorio ---
     else if (params.sendReminder) {
+      assertApiKeyIfConfigured_(params);
       const id = params.sendReminder;
       const when = params.when || 'exact';
       const rowNum = findRowById_(sheet, id, headers);
@@ -160,7 +178,7 @@ if (Object.prototype.toString.call(horaNotif) === '[object Date]') {
   horaNotif = String(horaNotif).replace(/^(\d{1,2}:\d{2}).*$/, '$1').trim();
 }
       const notas              = datos['Notas']               || '(sin notas)';
-      const tipoVivienda = getTipoViviendaLabel_(datos);
+      const tipoVivienda = getTipoViviendaLabel_(datos, null, categoriasConfig);
      // Formatear fecha legible: de "2025-06-15" a "15/06/2025"
       let fechaFormateada = '—';
 if (fechaNotif) {
@@ -249,7 +267,7 @@ if (fechaNotif) {
           if (h === 'Fecha') v = formatFechaOut_(v, tz);
           obj[h] = v;
         });
-        obj = enrichContactoConCategoria_(obj);
+        obj = enrichContactoConCategoria_(obj, categoriasConfig);
         obj["fila"] = i + 2;
         return obj;
       });
@@ -303,6 +321,7 @@ function doPost(e) {
   try {
     const data = parsePostData(e);
     Logger.log('Datos recibidos en doPost: ' + JSON.stringify(data));
+    assertApiKeyIfConfigured_(data);
     if (data.action && data.action !== 'saveFormData') {
       return handleCategoriasAction_(data.action, data, 'POST');
     }
@@ -412,6 +431,9 @@ function validateCategoriasActionPayload_(actionName, payload, method) {
   const httpMethod = String(method || '').toUpperCase();
 
   const mutatingActions = ['saveConfig', 'addCategoria', 'updateCategoria', 'deleteCategoria', 'toggleCategoria'];
+  if (mutatingActions.indexOf(action) !== -1) {
+    assertApiKeyIfConfigured_(payload || {});
+  }
   if (mutatingActions.indexOf(action) !== -1 && httpMethod !== 'POST') {
     throw new Error('Método no permitido para esta acción');
   }
