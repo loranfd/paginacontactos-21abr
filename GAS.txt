@@ -1,4 +1,18 @@
+function getConfiguredApiKey_() {
+  return String(PropertiesService.getScriptProperties().getProperty('API_KEY') || '').trim();
+}
+
+function assertApiKeyIfConfigured_(payload) {
+  const required = getConfiguredApiKey_();
+  if (!required) return;
+  const provided = String((payload && (payload.apiKey || payload.api_key)) || '').trim();
+  if (!provided || provided !== required) {
+    throw new Error('No autorizado');
+  }
+}
+
 function doGet(e) {
+
   try {
     e = e || { parameter: {} };
     const params = e.parameter || {};
@@ -16,9 +30,11 @@ function doGet(e) {
     if (idIndex === -1) throw new Error('Columna ID no encontrada');
 
     let response;
+    const categoriasConfig = getCategoriasConfig_();
 
     // --- Manejar parámetro marcar (OPTIMIZADO) ---
     if (params.marcar) {
+      assertApiKeyIfConfigured_(params);
       const marcarData = params.marcar.split(':');
       if (marcarData.length < 3) {
          return createResponse({ status: 'error', message: 'Formato de marcar inválido' });
@@ -107,6 +123,7 @@ function doGet(e) {
     
     // --- Manejar eliminación de fila (OPTIMIZADO) ---
     else if (params.deleteRow) {
+      assertApiKeyIfConfigured_(params);
       const id = params.deleteRow;
       const rowNum = findRowById_(sheet, id, headers);
       
@@ -125,7 +142,7 @@ function doGet(e) {
 
       if (rowNum !== -1) {
         const rowData = sheet.getRange(rowNum, 1, 1, headers.length).getValues()[0];
-        const dataObj = convertRowToObject_(headers, rowData);
+        const dataObj = enrichContactoConCategoria_(convertRowToObject_(headers, rowData), categoriasConfig);
         dataObj["fila"] = rowNum;
         response = { status: 'success', data: dataObj };
       } else {
@@ -135,6 +152,7 @@ function doGet(e) {
 
     // --- Enviar email recordatorio ---
     else if (params.sendReminder) {
+      assertApiKeyIfConfigured_(params);
       const id = params.sendReminder;
       const when = params.when || 'exact';
       const rowNum = findRowById_(sheet, id, headers);
@@ -160,7 +178,7 @@ if (Object.prototype.toString.call(horaNotif) === '[object Date]') {
   horaNotif = String(horaNotif).replace(/^(\d{1,2}:\d{2}).*$/, '$1').trim();
 }
       const notas              = datos['Notas']               || '(sin notas)';
-      const tipoVivienda = getTipoViviendaLabel_(datos);
+      const tipoVivienda = getTipoViviendaLabel_(datos, null, categoriasConfig);
      // Formatear fecha legible: de "2025-06-15" a "15/06/2025"
       let fechaFormateada = '—';
 if (fechaNotif) {
@@ -249,6 +267,7 @@ if (fechaNotif) {
           if (h === 'Fecha') v = formatFechaOut_(v, tz);
           obj[h] = v;
         });
+        obj = enrichContactoConCategoria_(obj, categoriasConfig);
         obj["fila"] = i + 2;
         return obj;
       });
@@ -302,6 +321,7 @@ function doPost(e) {
   try {
     const data = parsePostData(e);
     Logger.log('Datos recibidos en doPost: ' + JSON.stringify(data));
+    assertApiKeyIfConfigured_(data);
     if (data.action && data.action !== 'saveFormData') {
       return handleCategoriasAction_(data.action, data, 'POST');
     }
@@ -355,28 +375,30 @@ function doPost(e) {
     if (!finalData['categoria-id']) {
       finalData['categoria-id'] = resolveCategoriaIdDesdeDatos_(finalData);
     }
-    
+    const categoriasConfig = getCategoriasConfig_();
+    const finalDataEnriched = enrichContactoConCategoria_(finalData, categoriasConfig);
+
     // Mapear la fila completa según headers
     let rowData = expectedHeaders.map(h => {
       if (h === 'ID') return id;
       // Tu lógica de valores por defecto (es correcta)
-      if (h === 'Respondido') return finalData[h] || 'No';
-      if (h === 'Estado') return finalData[h] || 'Sin Llamar';
+      if (h === 'Respondido') return finalDataEnriched[h] || 'No';
+      if (h === 'Estado') return finalDataEnriched[h] || 'Sin Llamar';
     
-      if (h === 'Llamado') return finalData[h] || 'No';
+      if (h === 'Llamado') return finalDataEnriched[h] || 'No';
       // ... (resto de tu lógica de valores por defecto) ...
       if (h === 'Fecha') {
         if (isWordpress) {
           return Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
         }
-        let v = finalData[h] || finalData['date-33'];
+        let v = finalDataEnriched[h] || finalDataEnriched['date-33'];
         return v || '';
       }
       if (h === 'checkbox-374') {
-         if (Array.isArray(finalData[h])) return finalData[h].join(',');
-         if (typeof finalData[h] === 'object') return Object.values(finalData[h]).join(',');
+         if (Array.isArray(finalDataEnriched[h])) return finalDataEnriched[h].join(',');
+         if (typeof finalDataEnriched[h] === 'object') return Object.values(finalDataEnriched[h]).join(',');
       }
-      return finalData[h] || ''; // Usar el dato fusionado
+      return finalDataEnriched[h] || ''; // Usar el dato fusionado
     });
 
     // Escribir en la hoja
@@ -389,7 +411,7 @@ function doPost(e) {
     }
 
     // --- CORRECCIÓN BUG: Devolver la fila actualizada/creada ---
-    const dataObj = convertRowToObject_(expectedHeaders, rowData);
+    const dataObj = enrichContactoConCategoria_(convertRowToObject_(expectedHeaders, rowData), categoriasConfig);
     
     return ContentService.createTextOutput(JSON.stringify({ 
       status: 'success', 
@@ -404,11 +426,50 @@ function doPost(e) {
   }
 }
 
+function validateCategoriasActionPayload_(actionName, payload, method) {
+  const action = String(actionName || '').trim();
+  const httpMethod = String(method || '').toUpperCase();
+
+  const mutatingActions = ['saveConfig', 'addCategoria', 'updateCategoria', 'deleteCategoria', 'toggleCategoria'];
+  if (mutatingActions.indexOf(action) !== -1) {
+    assertApiKeyIfConfigured_(payload || {});
+  }
+  if (mutatingActions.indexOf(action) !== -1 && httpMethod !== 'POST') {
+    throw new Error('Método no permitido para esta acción');
+  }
+
+  if (action === 'addCategoria') {
+    const nombre = String(payload && payload.nombre || '').trim();
+    if (!nombre) throw new Error('Nombre obligatorio');
+    if (nombre.length > 120) throw new Error('Nombre de categoría demasiado largo');
+  }
+
+  if (action === 'updateCategoria') {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('ID obligatorio');
+    const nombre = String(payload && payload.nombre || '').trim();
+    if (nombre && nombre.length > 120) throw new Error('Nombre de categoría demasiado largo');
+  }
+
+  if (action === 'deleteCategoria' || action === 'toggleCategoria') {
+    const id = String(payload && payload.id || '').trim();
+    if (!id) throw new Error('ID obligatorio');
+  }
+
+  if (action === 'saveConfig') {
+    const rawConfig = payload && payload.config;
+    if (rawConfig && String(rawConfig).length > 2000000) {
+      throw new Error('Config demasiado grande');
+    }
+  }
+}
+
 function handleCategoriasAction_(action, payload, method) {
   try {
     const cfg = getCategoriasConfig_();
     const categorias = cfg.categorias || [];
     const actionName = String(action || '').trim();
+    validateCategoriasActionPayload_(actionName, payload || {}, method);
 
     if (actionName === 'getConfig') {
       return createResponse({ status: 'success', config: cfg });
@@ -965,28 +1026,53 @@ function testProgramado() {
 
 
 
-function getTipoViviendaLabel_(datos) {
-  const categoriaId = String(datos['categoria-id'] || '').trim();
-  const cfg = getCategoriasConfig_();
-  const categorias = cfg.categorias || [];
-  const categoria = categorias.find(c => String(c.id) === categoriaId);
-  if (categoria) {
-    if (categoriaId === 'villas_isla_cortegada') {
-      const viviendaInteresada = datos['vivienda-interesada'] || '';
-      return viviendaInteresada ? `${categoria.nombre} (${viviendaInteresada})` : categoria.nombre;
-    }
-    return categoria.nombre;
-  }
-  return categoriaId === 'villas_isla_cortegada' ? 'Villas Isla de Cortegada' : 'Vivienda normal';
+function getTipoViviendaLabel_(datos, categoria, cfg) {
+  const categoriaFinal = categoria || resolveCategoriaDesdeDatos_(datos, cfg);
+  if (categoriaFinal && categoriaFinal.nombre) return categoriaFinal.nombre;
+  return 'Vivienda normal';
 }
 
-function resolveCategoriaIdDesdeDatos_(datos) {
+function isCategoriaActiva_(categoria) {
+  if (!categoria) return true;
+  const activa = categoria.activa;
+  if (typeof activa === 'boolean') return activa;
+  const normalized = normalizeString_(activa);
+  return ['false', '0', 'no', 'oculta', 'inactiva', 'off'].indexOf(normalized) === -1;
+}
+
+function resolveCategoriaDesdeDatos_(datos, cfg) {
+  const safeConfig = cfg || getCategoriasConfig_();
+  const categorias = safeConfig.categorias || [];
+  const categoriaId = resolveCategoriaIdDesdeDatos_(datos, safeConfig);
+  const categoria = categorias.find(c => String(c.id) === String(categoriaId));
+  return categoria || null;
+}
+
+function enrichContactoConCategoria_(datos, cfg) {
+  const safeCfg = cfg || getCategoriasConfig_();
+  const categoria = resolveCategoriaDesdeDatos_(datos, safeCfg);
+  const categoriaId = categoria ? String(categoria.id || '') : resolveCategoriaIdDesdeDatos_(datos, safeCfg);
+  const categoriaNombre = categoria && categoria.nombre ? categoria.nombre : (categoriaId === 'villas_isla_cortegada' ? 'Villas Isla de Cortegada' : 'Vivienda normal');
+  const categoriaActiva = isCategoriaActiva_(categoria);
+  return Object.assign({}, datos, {
+    'categoria-id': categoriaId || '',
+    'categoria-id-resolved': categoriaId || '',
+    'categoria-nombre': categoriaNombre,
+    'categoria-activa': categoriaActiva,
+    'tipo-vivienda-label': getTipoViviendaLabel_(datos, categoria, safeCfg),
+    'email-asunto-template': (categoria && categoria.email && categoria.email.asunto) || '',
+    'email-cuerpo-template': (categoria && categoria.email && categoria.email.cuerpo) || '',
+    'email-recordatorio-template': (categoria && categoria.email && categoria.email.recordatorio) || ''
+  });
+}
+
+function resolveCategoriaIdDesdeDatos_(datos, cfg) {
   const categoriaId = String(datos['categoria-id'] || '').trim();
   if (categoriaId) return categoriaId;
   const interes = normalizeString_(datos.interes || datos['interes-select'] || datos['interes-otros']);
   const viviendaInteresada = normalizeString_(datos['vivienda-interesada']);
-  const cfg = getCategoriasConfig_();
-  const categorias = cfg.categorias || [];
+  const safeCfg = cfg || getCategoriasConfig_();
+  const categorias = safeCfg.categorias || [];
 
   const byInteres = categorias.find((cat) => {
     const expected = normalizeString_((cat.matcher && cat.matcher.value) || cat.nombre || '');
