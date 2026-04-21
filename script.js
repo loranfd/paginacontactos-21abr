@@ -2899,6 +2899,8 @@ function getCategoriaById(id) {
 }
 
 function getContactoCategoriaId(contacto) {
+  const resolvedRaw = String(contacto?.['categoria-id-resolved'] || '').trim();
+  if (resolvedRaw) return resolvedRaw;
   const raw = String(contacto?.['categoria-id'] || contacto?.categoriaId || contacto?.categoria_id || '').trim();
   if (raw) return raw;
   const resolved = CategoriaSystem.resolveCategoria(appConfig || getDefaultAppConfig(), contacto);
@@ -2917,11 +2919,17 @@ function isCategoriaActiva(categoria) {
 }
 
 function isContactoDeCategoriaActiva(contacto) {
+  if (typeof contacto?.['categoria-activa'] === 'boolean') return contacto['categoria-activa'];
+  if (contacto?.['categoria-activa'] !== undefined && contacto?.['categoria-activa'] !== null) {
+    return isCategoriaActiva({ activa: contacto['categoria-activa'] });
+  }
   const categoria = CategoriaSystem.resolveCategoria(appConfig || getDefaultAppConfig(), contacto);
   return isCategoriaActiva(categoria);
 }
 
 function buildTipoViviendaLabel(contacto) {
+  const serverLabel = String(contacto?.['tipo-vivienda-label'] || '').trim();
+  if (serverLabel) return serverLabel;
   return CategoriaSystem.buildTipoViviendaLabel(appConfig || getDefaultAppConfig(), contacto);
 }
 
@@ -3283,13 +3291,14 @@ function getFormularioConfigByCategoria(categoriaId) {
 
 function getEmailTemplateByCategoria(categoriaId, payload = {}) {
   const categoria = getCategoriaById(categoriaId);
-  const asunto = categoria?.email?.asunto || 'Seguimiento de tu solicitud';
-  const editable = categoria?.email?.cuerpo || '';
- const saludo = getEmailPrefix(payload.nombre || '');
-const fullBody = `${saludo}\n\n${editable}`;
+  const asunto = payload['email-asunto-template'] || categoria?.email?.asunto || 'Seguimiento de tu solicitud';
+  const editable = payload['email-cuerpo-template'] || categoria?.email?.cuerpo || '';
+  const saludo = getEmailPrefix(payload.nombre || '');
+  const fullBody = `${saludo}\n\n${editable}`;
   const htmlBody = fullBody.replace(/\{\{([^}]+)\}\}/g, (_, key) => payload[key.trim()] ?? '');
   return { asunto, cuerpo: htmlBody };
 }
+
 // ====================== CARGA DE CONTACTOS ======================
 async function cargarContactos(incluirEliminados = false) {
   try {
